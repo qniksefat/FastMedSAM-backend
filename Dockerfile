@@ -1,17 +1,38 @@
-FROM pytorch/pytorch:latest
+# Use the official Python base image
+FROM python:3.9-slim
 
-RUN groupadd -r user && useradd -m --no-log-init -r -g user user
-# required by cv2
-RUN apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-RUN mkdir -p /opt/app /inputs /outputs \
-    && chown user:user /opt/app /inputs /outputs
+# Set work directory
+WORKDIR /app
 
-USER user
-WORKDIR /opt/app
-ENV PATH="/home/user/.local/bin:${PATH}"
+# Copy the entire backend directory
+COPY backend/ ./backend/
 
-RUN python -m pip install --user -U pip && python -m pip install --user pip-tools
+# Copy the inferences directory
+COPY inferences/ ./inferences/
+COPY segment_anything/ ./segment_anything/
+COPY ./*.py ./
+COPY ./lite_medsam.pth ./
 
-COPY --chown=user:user . .
-RUN pip install -e .
+# Copy the Dockerfile, setup.py, and other required files
+COPY Dockerfile .
+COPY setup.py .
+COPY LICENSE .
+COPY README.md .
+
+# Install build tools and development headers
+RUN apt-get update && \
+    apt-get install -y gcc python3-dev
+
+# Install dependencies
+RUN pip install --no-cache-dir .
+
+# Expose the port FastAPI is running on
+EXPOSE 8000
+
+# Run the FastAPI application
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
