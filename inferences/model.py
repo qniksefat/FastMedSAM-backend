@@ -50,6 +50,37 @@ class MedSAM_Lite(nn.Module):
 
         return low_res_masks
 
+    @torch.no_grad()
+    def postprocess_masks(self, masks, new_size, original_size):
+        """
+        Do cropping and resizing
+
+        Parameters
+        ----------
+        masks : torch.Tensor
+            masks predicted by the model
+        new_size : tuple
+            the shape of the image after resizing to the longest side of 256
+        original_size : tuple
+            the original shape of the image
+
+        Returns
+        -------
+        torch.Tensor
+            the upsampled mask to the original size
+        """
+        # Crop
+        masks = masks[..., :new_size[0], :new_size[1]]
+        # Resize
+        masks = F.interpolate(
+            masks,
+            size=(original_size[0], original_size[1]),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+        return masks
+
 
 class Inference:
     def __init__(self, medsam_lite_checkpoint_path, device, bbox_shift=5):
@@ -62,7 +93,12 @@ class Inference:
         medsam_lite_image_encoder = TinyViT(
             img_size=256,
             in_chans=3,
-            embed_dims=[64, 128, 160, 320],
+            embed_dims=[
+                64, ## (64, 256, 256)
+                128, ## (128, 128, 128)
+                160, ## (160, 64, 64)
+                320 ## (320, 64, 64) 
+            ],
             depths=[2, 2, 6, 2],
             num_heads=[2, 4, 5, 10],
             window_sizes=[7, 7, 14, 7],
@@ -149,23 +185,22 @@ class Inference:
 
         if (not isfile(join(pred_save_dir, task_folder, npz_name))) or overwrite:
             npz_data = np.load(gt_path_file, 'r', allow_pickle=True)
-            img_3D = npz_data['imgs']
-            gt_3D = npz_data['gts']
+            img_3D = npz_data['imgs'] # (Num, H, W)
+            gt_3D = npz_data['gts'] # (Num, H, W)
             spacing = npz_data['spacing']
             seg_3D = np.zeros_like(gt_3D, dtype=np.uint8)
             box_list = [dict() for _ in range(img_3D.shape[0])]
 
             for i in range(img_3D.shape[0]):
-                logger.info(f"Processing slice {i}")
-                img_2d = img_3D[i]
+                img_2d = img_3D[i, :, :] # (H, W)
                 H, W = img_2d.shape[:2]
-                img_3c = np.repeat(img_2d[:, :, None], 3, axis=-1)
+                img_3c = np.repeat(img_2d[:, :, None], 3, axis=-1) # (H, W, 3)
                 img_256_tensor, new_size = self.preprocess_image(img_3c)
 
                 with torch.no_grad():
                     image_embedding = self.medsam_lite_model.image_encoder(img_256_tensor)
 
-                gt = gt_3D[i]
+                gt = gt_3D[i, :, :] # (H, W)
                 label_ids = np.unique(gt)[1:]
                 for label_id in label_ids:
                     gt2D = np.uint8(gt == label_id)
@@ -177,10 +212,16 @@ class Inference:
                         seg_3D[i, sam_mask > 0] = label_id
                         box_list[i][label_id] = box
                 
-            np.savez_compressed(join(pred_save_dir, task_folder, npz_name), segs=seg_3D, gts=gt_3D, spacing=spacing)
+            np.savez_compressed(
+                join(pred_save_dir, task_folder, npz_name),
+                segs=seg_3D, gts=gt_3D, spacing=spacing
+            )
 
+            # Visualize overlay, mask, and box
             if save_overlay:
-                self.visualize_overlay(img_3D, gt_3D, seg_3D, box_list, new_size, (H, W), png_save_dir, npz_name)
+                self.visualize_overlay(img_3D, gt_3D, seg_3D, 
+                                       box_list, new_size, (H, W), 
+                                       png_save_dir, npz_name)
 
     def visualize_overlay(self, img_3D, gt_3D, seg_3D, box_list, new_size, original_size, png_save_dir, npz_name):
         idx = int(seg_3D.shape[0] / 2)
@@ -226,19 +267,23 @@ def get_bbox(gt2D, bbox_shift=5):
     y_indices, x_indices = np.where(gt2D > 0)
     x_min, x_max = x_indices.min(), x_indices.max()
     y_min, y_max = y_indices.min(), y_indices.max()
-    return [x_min - bbox_shift, y_min - bbox_shift, x_max + bbox_shift + 1, y_max + bbox_shift + 1]
+    return np.array([x_min - bbox_shift, y_min - bbox_shift, 
+                     x_max + bbox_shift + 1, y_max + bbox_shift + 1])
 
-def resize_box(box, from_size, to_size):
-    old_w, old_h = from_size
-    new_w, new_h = to_size
-    scale_w, scale_h = new_w / old_w, new_h / old_h
-    return [int(box[0] * scale_w), int(box[1] * scale_h), int(box[2] * scale_w), int(box[3] * scale_h)]
+def resize_box(box: np.ndarray, 
+               new_size: tuple, 
+               original_size: tuple) -> np.ndarray:    
+    new_box = np.zeros_like(box)
+    scale = max(original_size) / max(new_size)
+    for i in range(len(box)):
+       new_box[i] = int(box[i] * scale)
+    return new_box
 
-def show_mask(mask, ax, random_color=False):
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+def show_mask(mask, ax, mask_color=None, alpha=0.5):
+    if mask_color:
+        color = np.concatenate([mask_color, np.array([alpha])], axis=0)
     else:
-        color = np.array([30 / 255, 144 / 255, 255 / 255, 0.6])
+        color = np.array([251 / 255, 252 / 255, 30 / 255, alpha])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
     ax.imshow(mask_image)
