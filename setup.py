@@ -19,7 +19,6 @@ setup(
         "scikit-image",
         "SimpleITK>=2.2.1",
         "pyarrow",
-        "pandas",
         "nibabel",
         "tqdm",
         "scipy",
@@ -29,8 +28,8 @@ setup(
         "ipywidgets",
         "fastapi",
         "uvicorn",
-        "numpy",
-        "torch",
+        "numpy==1.26.4",
+        "torch==2.3.1",
     ],
     packages=find_packages(exclude="notebooks"),
     extras_require={
@@ -38,4 +37,3 @@ setup(
         "dev": ["flake8", "isort", "black", "mypy"],
     },
 )
-

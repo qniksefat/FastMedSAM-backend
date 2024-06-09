@@ -1,11 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import os
 import shutil
 from tempfile import TemporaryDirectory
-import numpy as np
 import torch
-from inferences.model import Inference
+from inferences.inference import Inference
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
@@ -21,12 +20,13 @@ upload_dir = TemporaryDirectory()
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
-    file_location = os.path.join(upload_dir.name, file.filename)
-
+    # create a unique file name, with .npz format
+    file_name = f"{file.filename}_{os.urandom(4).hex()}.npz"
+    file_location = os.path.join(upload_dir.name, file_name)
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
     logger.info(f"Uploaded file in the temporary directory: {file_location}")
-    return JSONResponse(content={"filename": file.filename})
+    return JSONResponse(content={"filename": file_name})
 
 @app.get("/segment/")
 async def segment_file(filename: str = Query(...)):
@@ -37,15 +37,18 @@ async def segment_file(filename: str = Query(...)):
 
     try:
         logger.info(f"Processing file: {file_location}")
-        pred_save_dir = upload_dir.name
-        save_overlay = False
         png_save_dir = upload_dir.name
         overwrite = True
 
-        inference.process_file(file_location, pred_save_dir, save_overlay, png_save_dir, overwrite)
-        pred_npz = np.load(os.path.join(pred_save_dir, filename), allow_pickle=True)
-        pred_segs = pred_npz["segs"]
+        inference.process_file(file_location, True, png_save_dir, overwrite)
+        pred_png_path = os.path.join(png_save_dir, filename.replace(".npz", ".png"))
+        logger.info(f"PNG file saved: {pred_png_path}")
+        if not os.path.exists(pred_png_path):
+            raise HTTPException(status_code=500, detail="Segmentation failed")
         logger.info(f"Segmentation completed for file: {file_location}")
-        return JSONResponse(content={"prediction": pred_segs.tolist()})
+        with open(pred_png_path, "rb") as image_file:
+            return Response(image_file.read(), media_type="image/png")
     except Exception as e:
+        logger.error(f"Error during segmentation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
