@@ -164,7 +164,7 @@ class Inference:
     ):
         idx = int(seg_3D.shape[0] / 2)
         box_dict = box_list[idx]
-        _, ax = plt.subplots(1, 1, figsize=(15, 5))
+        _, ax = plt.subplots(1, 1, figsize=(6, 6))
         ax.imshow(img_3D[idx], cmap='gray')
         ax.axis('off')
 
