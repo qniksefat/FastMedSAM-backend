@@ -21,7 +21,7 @@ upload_dir = TemporaryDirectory()
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     # create a unique file name, with .npz format
-    file_name = f"{file.filename}_{os.urandom(4).hex()}.npz"
+    file_name = f"{file.filename.split('.npz')[0]}_{os.urandom(4).hex()}.npz"
     file_location = os.path.join(upload_dir.name, file_name)
     with open(file_location, "wb+") as file_object:
         shutil.copyfileobj(file.file, file_object)
@@ -37,17 +37,16 @@ async def segment_file(filename: str = Query(...)):
 
     try:
         logger.info(f"Processing file: {file_location}")
-        png_save_dir = upload_dir.name
         overwrite = True
-
-        inference.process_file(file_location, True, png_save_dir, overwrite)
-        pred_png_path = os.path.join(png_save_dir, filename.replace(".npz", ".png"))
-        logger.info(f"PNG file saved: {pred_png_path}")
-        if not os.path.exists(pred_png_path):
+        pred_path = os.path.join(upload_dir.name, filename.replace(".npz", "_pred.npz"))
+        inference.process_file(file_location, upload_dir.name, overwrite)
+        logger.info(f"File saved: {pred_path}")
+        if not os.path.exists(pred_path):
             raise HTTPException(status_code=500, detail="Segmentation failed")
         logger.info(f"Segmentation completed for file: {file_location}")
-        with open(pred_png_path, "rb") as image_file:
-            return Response(image_file.read(), media_type="image/png")
+        with open(pred_path, "rb") as file:
+            # returns the npz file
+            return Response(content=file.read(), media_type="application/octet-stream")
     except Exception as e:
         logger.error(f"Error during segmentation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
