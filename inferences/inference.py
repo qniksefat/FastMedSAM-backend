@@ -1,8 +1,6 @@
 import torch
 import numpy as np
 import cv2
-from matplotlib import pyplot as plt
-from os import makedirs
 from os.path import join, basename, isfile
 
 from segment_anything.modeling import MaskDecoder, PromptEncoder, TwoWayTransformer
@@ -12,9 +10,6 @@ from .utils import (
     resize_longest_side,
     pad_image,
     get_bbox,
-    show_mask,
-    show_box,
-    resize_box,
 )
 import logging
 
@@ -111,10 +106,9 @@ class Inference:
         low_res_pred = torch.sigmoid(low_res_pred).squeeze().cpu().numpy()
         return (low_res_pred > 0.5).astype(np.uint8)
 
-    def process_file(self, gt_path_file, save_overlay, png_save_dir, overwrite):
-        npz_name = basename(gt_path_file)
-        png_file = join(png_save_dir, npz_name.split('.')[0] + '.png')
-        if (not isfile(png_file)) or overwrite:
+    def process_file(self, gt_path_file, pred_save_dir, overwrite):
+        npz_name = basename(gt_path_file).replace('.npz', '_pred.npz')
+        if (not isfile(join(pred_save_dir, npz_name))) or overwrite:
             npz_data = np.load(gt_path_file, 'r', allow_pickle=True)
             img_3D = npz_data['imgs'] # (Num, H, W)
             gt_3D = npz_data['gts'] # (Num, H, W)
@@ -145,39 +139,5 @@ class Inference:
                         seg_3D[i, sam_mask > 0] = label_id
                         box_list[i][label_id] = box
 
-           # Visualize overlay, mask, and box
-            if save_overlay:
-                self.visualize_overlay(img_3D, gt_3D, seg_3D,
-                                       box_list, new_size, (H, W),
-                                       png_save_dir, npz_name)
-
-    def visualize_overlay(
-            self,
-            img_3D,
-            gt_3D,
-            seg_3D,
-            box_list,
-            new_size,
-            original_size,
-            png_save_dir,
-            npz_name,
-    ):
-        idx = int(seg_3D.shape[0] / 2)
-        box_dict = box_list[idx]
-        _, ax = plt.subplots(1, 1, figsize=(6, 6))
-        ax.imshow(img_3D[idx], cmap='gray')
-        ax.axis('off')
-
-        _, box_256 = list(box_dict.items())[-1]
-        color = np.random.rand(3)
-        box_viz = resize_box(box_256, new_size, original_size)
-
-        show_mask(gt_3D[idx], ax, mask_color=color)
-        show_box(box_viz, ax, edgecolor=color)
-
-        plt.tight_layout()
-        plt.show()
-        save_path = join(png_save_dir, npz_name.split('.')[0] + '.png')
-        logger.info(f"Saving PNG file: {save_path}")
-        plt.savefig(save_path, dpi=300)
-        plt.close()
+            np.savez_compressed(join(pred_save_dir, npz_name), 
+                                imgs=img_3D, gts=gt_3D, segs=seg_3D, spacing=spacing)
