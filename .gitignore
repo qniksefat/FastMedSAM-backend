@@ -1,7 +1,9 @@
+pg*.py
+pg*.ipynb
 *.pyc
 # Project specific
 *.DS_Store
-*.pth
+# *.pth
 *.nii.gz
 *.nii
 *.npy
